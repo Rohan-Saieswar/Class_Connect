@@ -1,0 +1,1118 @@
+// Section-Connect Multi-Tenant Platform Schema
+// Compatible with SQLite (for instant local zero-config execution) and PostgreSQL (for production)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 1. User Account Entity (Global identity across platform, scoped to @srmap.edu.in)
+model User {
+  id                   String                 @id @default(cuid())
+  email                String                 @unique
+  name                 String
+  passwordHash         String
+  avatar               String?
+  isVerified           Boolean                @default(false)
+  globalRole           String                 @default("USER") // USER, SYSTEM_ADMIN
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  // Relationships
+  studentProfile       StudentProfile?
+  facultyProfile       FacultyProfile?
+  memberships          WorkspaceMembership[]
+  approvedMemberships  WorkspaceMembership[]  @relation("ApprovedBy")
+  subjectMemberships   SubjectMembership[]
+  announcements        Announcement[]
+  posts                Post[]
+  comments             Comment[]
+  reactions            Reaction[]
+  questions            Question[]
+  answers              Answer[]
+  resources            Resource[]
+  files                File[]
+  assignments          Assignment[]
+  calendarEvents       CalendarEvent[]
+  polls                Poll[]
+  pollVotes            PollVote[]
+  requests             Request[]              @relation("StudentRequests")
+  reviewedRequests     Request[]              @relation("ReviewedRequests")
+  requestComments      RequestComment[]
+  notifications        Notification[]
+  bookmarks            Bookmark[]
+  reportsSubmitted     Report[]               @relation("ReportReporter")
+  reportsResolved      Report[]               @relation("ReportResolver")
+  studyGroupsLed       StudyGroup[]           @relation("GroupLeader")
+  studyGroupMemberships StudyGroupMembership[]
+  messagesSent         Message[]
+  messageParticipants  MessageParticipant[]
+  facultyJoinReviews   FacultyJoinRequest[]   @relation("ReviewedBy")
+  auditLogs            AuditLog[]
+  userPreference       UserPreference?
+  notificationPreference NotificationPreference?
+  createdWorkspaces    Workspace[]            @relation("WorkspaceCreator")
+  googleClassroomConnections GoogleClassroomUserConnection[]
+  googleClassroomCourses GoogleClassroomCourse[]
+  googleClassroomAnnouncements GoogleClassroomAnnouncement[]
+  googleClassroomCoursework GoogleClassroomCoursework[]
+  googleClassroomMaterials GoogleClassroomMaterial[]
+  googleClassroomTopics GoogleClassroomTopic[]
+  googleClassroomSubmissions GoogleClassroomSubmission[]
+  googleClassroomSyncLogs GoogleClassroomSyncLog[]
+  googleClassroomNotifications GoogleClassroomNotification[]
+  googleClassroomAttachments GoogleClassroomAttachment[]
+
+  @@index([email])
+}
+
+// 2. Multi-Tenant Class / Workspace Entity
+model Workspace {
+  id               String                 @id @default(cuid())
+  universityId     String                 @default("srmap")
+  universityName   String                 @default("SRM University–AP")
+  department       String                 // e.g. Computer Science and Engineering
+  program          String                 // e.g. B.Tech
+  specialization   String                 // e.g. Artificial Intelligence and Machine Learning
+  section          String                 // e.g. "J", "G", "K", "A" (SOURCE OF TRUTH)
+  displayName      String                 // e.g. "CSE AI & ML — Section J"
+  generatedName    String                 // e.g. "J-Connect" (derived as `${section}-Connect`)
+  academicYear     String                 // e.g. "2026–27"
+  semester         Int                    @default(5)
+  description      String?
+  logo             String?
+  banner           String?
+  accentColor      String                 @default("#6366f1") // Indigo / Custom theme
+  status           String                 @default("ACTIVE") // ACTIVE, ARCHIVED, SUSPENDED
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  createdById      String?
+  creator          User?                  @relation("WorkspaceCreator", fields: [createdById], references: [id])
+
+  // Tenant-isolated child entities
+  memberships         WorkspaceMembership[]
+  subjects            Subject[]
+  announcements       Announcement[]
+  posts               Post[]
+  reactions           Reaction[]
+  questions           Question[]
+  resources           Resource[]
+  files               File[]
+  assignments         Assignment[]
+  timetableEntries    TimetableEntry[]
+  exams               Exam[]
+  calendarEvents      CalendarEvent[]
+  polls               Poll[]
+  requests            Request[]
+  notifications       Notification[]
+  emailNotifications  EmailNotification[]
+  bookmarks           Bookmark[]
+  reports             Report[]
+  studyGroups         StudyGroup[]
+  messages            Message[]
+  messageParticipants MessageParticipant[]
+  facultyJoinRequests FacultyJoinRequest[]
+  auditLogs           AuditLog[]
+  settings            WorkspaceSettings?
+  googleClassroomConnections GoogleClassroomUserConnection[]
+  googleClassroomCourses GoogleClassroomCourse[]
+  googleClassroomAnnouncements GoogleClassroomAnnouncement[]
+  googleClassroomCoursework GoogleClassroomCoursework[]
+  googleClassroomMaterials GoogleClassroomMaterial[]
+  googleClassroomTopics GoogleClassroomTopic[]
+  googleClassroomSubmissions GoogleClassroomSubmission[]
+  googleClassroomSyncLogs GoogleClassroomSyncLog[]
+  googleClassroomNotifications GoogleClassroomNotification[]
+  googleClassroomAttachments GoogleClassroomAttachment[]
+
+  @@unique([department, program, specialization, section, academicYear])
+  @@index([section])
+  @@index([status])
+}
+
+// 3. Workspace Membership Entity (Strict Workspace RBAC)
+model WorkspaceMembership {
+  id          String    @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        String    @default("STUDENT") // STUDENT, CR, FACULTY, MODERATOR, SYSTEM_ADMIN
+  status      String    @default("APPROVED") // PENDING, APPROVED, REJECTED, SUSPENDED
+  joinedAt    DateTime  @default(now())
+  approvedAt  DateTime?
+  approvedById String?
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  approvedBy  User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([role])
+}
+
+// 4. Student Profile
+model StudentProfile {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  rollNumber         String   @unique // e.g. "AP23110010001"
+  currentSemester    Int      @default(5)
+  cgpa               Float?
+  bio                String?
+  skills             String?  // comma-separated or json
+  interests          String?
+  github             String?
+  linkedin           String?
+  portfolio          String?
+  academicInterests  String?
+  resumeUrl          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 5. Faculty Profile
+model FacultyProfile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  employeeId    String   @unique // e.g. "EMP4021"
+  department    String   @default("Computer Science and Engineering")
+  designation   String   @default("Assistant Professor")
+  cabin         String?  // e.g. "Admin Block 402"
+  qualification String?  // e.g. "Ph.D. in Computer Science"
+  researchAreas String?
+  officeHours   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 6. Subject Entity
+model Subject {
+  id               String               @id @default(cuid())
+  workspaceId      String
+  code             String               // e.g. "CSE 301"
+  name             String               // e.g. "Artificial Intelligence & Neural Networks"
+  description      String?
+  credits          Int                  @default(4)
+  semester         Int                  @default(5)
+  syllabusUrl      String?
+  icon             String?              @default("BookOpen")
+  color            String?              @default("#3b82f6")
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberships      SubjectMembership[]
+  announcements    Announcement[]
+  questions        Question[]
+  resources        Resource[]
+  assignments      Assignment[]
+  timetableEntries TimetableEntry[]
+  exams            Exam[]
+  studyGroups      StudyGroup[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId])
+}
+
+// 7. Subject Membership
+model SubjectMembership {
+  id        String   @id @default(cuid())
+  subjectId String
+  userId    String
+  role      String   @default("STUDENT") // FACULTY, STUDENT, TA
+  createdAt DateTime @default(now())
+
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([subjectId, userId])
+  @@index([subjectId])
+  @@index([userId])
+}
+
+// 8. Announcement Entity
+model Announcement {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  subjectId    String?
+  title        String
+  content      String
+  category     String    @default("GENERAL") // GENERAL, ACADEMIC, EXAMINATION, ASSIGNMENT, ATTENDANCE, EVENT, FACULTY, ADMINISTRATIVE, URGENT
+  priority     String    @default("MEDIUM")  // LOW, MEDIUM, HIGH, URGENT
+  status       String    @default("PUBLISHED") // DRAFT, SCHEDULED, PUBLISHED, ARCHIVED
+  isPinned     Boolean   @default(false)
+  publishedAt  DateTime  @default(now())
+  expiresAt    DateTime?
+  attachments  String?   // JSON string of attachments
+  authorId     String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject      Subject?  @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  author       User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([subjectId])
+  @@index([category])
+  @@index([priority])
+}
+
+// 9. Class Feed Post Entity
+model Post {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  authorId        String
+  channel         String    @default("general") // general, academics, programming, projects, random
+  type            String    @default("GENERAL") // GENERAL, DISCUSSION, QUESTION, DOUBT, PROBLEM, SUGGESTION, RESOURCE, EVENT, POLL
+  title           String?
+  content         String
+  attachmentsJson String?
+  isPinned        Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author          User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  comments        Comment[]
+
+  @@index([workspaceId])
+  @@index([authorId])
+  @@index([channel])
+}
+
+// 10. Comment Entity
+model Comment {
+  id        String    @id @default(cuid())
+  postId    String
+  authorId  String
+  parentId  String?
+  content   String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+
+  @@index([postId])
+  @@index([authorId])
+}
+
+// 11. Reaction Entity
+model Reaction {
+  id          String    @id @default(cuid())
+  workspaceId String
+  targetType  String    // POST, COMMENT, ANNOUNCEMENT, ANSWER
+  targetId    String
+  userId      String
+  emoji       String    // e.g. 👍, ❤️, 🚀, 💡, 🔥
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, targetType, targetId, userId, emoji])
+  @@index([workspaceId])
+  @@index([targetId])
+}
+
+// 12. Academic Q&A Question Entity
+model Question {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  subjectId        String
+  authorId         String
+  title            String
+  details          String
+  topic            String?
+  tags             String?   // comma-separated
+  isSolved         Boolean   @default(false)
+  acceptedAnswerId String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject          Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  author           User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  answers          Answer[]
+
+  @@index([workspaceId])
+  @@index([subjectId])
+  @@index([authorId])
+}
+
+// 13. Answer Entity
+model Answer {
+  id              String   @id @default(cuid())
+  questionId      String
+  authorId        String
+  content         String
+  isFacultyAnswer Boolean  @default(false)
+  isAccepted      Boolean  @default(false)
+  upvotesCount    Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  question        Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  author          User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@index([authorId])
+}
+
+// 14. Resource Library Entity
+model Resource {
+  id          String    @id @default(cuid())
+  workspaceId String
+  subjectId   String
+  title       String
+  description String?
+  category    String    // NOTES, PPT, QUESTION_PAPER, LAB_MANUAL, SYLLABUS, ASSIGNMENT_REF, BOOK
+  unit        Int?      // Unit 1, Unit 2, etc.
+  semester    Int       @default(5)
+  fileUrl     String
+  fileType    String    // pdf, pptx, docx, zip, link
+  fileSize    String?   // e.g. "4.2 MB"
+  authorId    String
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject     Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([subjectId])
+  @@index([category])
+}
+
+// 15. Uploaded File Entity
+model File {
+  id          String    @id @default(cuid())
+  workspaceId String
+  uploaderId  String
+  fileName    String
+  fileUrl     String
+  mimeType    String
+  sizeBytes   Int
+  storageKey  String
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  uploader    User      @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+// 16. Assignment Entity
+model Assignment {
+  id                     String    @id @default(cuid())
+  workspaceId            String
+  subjectId              String
+  authorId               String
+  title                  String
+  description            String
+  assignedDate           DateTime  @default(now())
+  dueDate                DateTime
+  totalMarks             Int       @default(100)
+  attachmentUrl          String?
+  submissionInstructions String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject                Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  author                 User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([subjectId])
+}
+
+// 17. Timetable Entry Entity
+model TimetableEntry {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  subjectId    String
+  dayOfWeek    String    // MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY
+  periodNumber Int       // 1, 2, 3, 4, 5, 6, 7
+  startTime    String    // "09:00 AM"
+  endTime      String    // "09:50 AM"
+  room         String    // "ALH-304"
+  building     String    // "Academic Block"
+  facultyName  String
+  type         String    @default("LECTURE") // LECTURE, LAB, TUTORIAL
+  status       String    @default("NORMAL")  // NORMAL, RESCHEDULED, CANCELLED, SUBSTITUTION
+  note         String?
+  createdAt    DateTime  @default(now())
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject      Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([dayOfWeek])
+  @@index([subjectId])
+}
+
+// 18. Examination Center Entity
+model Exam {
+  id          String    @id @default(cuid())
+  workspaceId String
+  subjectId   String
+  title       String    // e.g. "CLA 1 Assessment"
+  type        String    // CLA, MID_SEM, END_SEM, LAB_VIVA, QUIZ, INTERNAL
+  date        DateTime
+  startTime   String    // "10:00 AM"
+  endTime     String    // "11:30 AM"
+  venue       String    // "Hall 2, Level 3"
+  syllabus    String?
+  maxMarks    Int       @default(50)
+  weightage   String?   // "15%"
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject     Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([subjectId])
+  @@index([type])
+}
+
+// 19. Calendar Event Entity
+model CalendarEvent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  title       String
+  description String?
+  eventType   String    @default("GENERAL") // EXAM, ASSIGNMENT, WORKSHOP, GUEST_LECTURE, CLASS_MEETING, HOLIDAY, GENERAL
+  startDate   DateTime
+  endDate     DateTime
+  isAllDay    Boolean   @default(false)
+  location    String?
+  organizerId String
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  organizer   User      @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([startDate])
+}
+
+// 20. Poll Entity
+model Poll {
+  id                String       @id @default(cuid())
+  workspaceId       String
+  authorId          String
+  question          String
+  description       String?
+  isMultipleChoice  Boolean      @default(false)
+  isAnonymous       Boolean      @default(false)
+  resultsVisibility String       @default("ALWAYS") // ALWAYS, AFTER_VOTE, AFTER_DEADLINE
+  deadline          DateTime?
+  createdAt         DateTime     @default(now())
+
+  workspace         Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author            User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  options           PollOption[]
+  votes             PollVote[]
+
+  @@index([workspaceId])
+}
+
+// 21. Poll Option Entity
+model PollOption {
+  id        String     @id @default(cuid())
+  pollId    String
+  text      String
+  voteCount Int        @default(0)
+
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes     PollVote[]
+
+  @@index([pollId])
+}
+
+// 22. Poll Vote Entity
+model PollVote {
+  id        String     @id @default(cuid())
+  pollId    String
+  optionId  String
+  userId    String
+  createdAt DateTime   @default(now())
+
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId, optionId])
+  @@index([pollId])
+  @@index([userId])
+}
+
+// 23. Class Request Entity (Student Ticket System)
+model Request {
+  id              String           @id @default(cuid())
+  workspaceId     String
+  studentId       String
+  title           String
+  category        String           // ATTENDANCE_CORRECTION, ACADEMIC_CLARIFICATION, FACULTY_MEETING, CLASS_PROBLEM, RESOURCE_REQUEST, EVENT_REQUEST, OTHER
+  description     String
+  urgency         String           @default("MEDIUM") // LOW, MEDIUM, HIGH
+  status          String           @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED, REJECTED, IN_PROGRESS, RESOLVED, CLOSED
+  resolutionNotes String?
+  reviewedById    String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  student         User             @relation("StudentRequests", fields: [studentId], references: [id], onDelete: Cascade)
+  reviewedBy      User?            @relation("ReviewedRequests", fields: [reviewedById], references: [id])
+  comments        RequestComment[]
+
+  @@index([workspaceId])
+  @@index([studentId])
+  @@index([status])
+}
+
+// 24. Request Comment Entity
+model RequestComment {
+  id          String   @id @default(cuid())
+  requestId   String
+  authorId    String
+  comment     String
+  isStaffOnly Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  request     Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+}
+
+// 25. Notification Entity
+model Notification {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  title       String
+  message     String
+  type        String    // ANNOUNCEMENT, ASSIGNMENT, EXAM, TIMETABLE, REQUEST, MENTION, POLL
+  linkUrl     String?
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([isRead])
+}
+
+// 26. Email Notification Queue Entity
+model EmailNotification {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  recipientEmail String
+  subject        String
+  htmlBody       String
+  status         String    @default("QUEUED") // QUEUED, SENT, FAILED
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+// 27. Bookmark Entity
+model Bookmark {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  entityType  String    // POST, QUESTION, RESOURCE, ANNOUNCEMENT, ASSIGNMENT, EVENT
+  entityId    String
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId, entityType, entityId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+// 28. Moderation Report Entity
+model Report {
+  id          String    @id @default(cuid())
+  workspaceId String
+  reporterId  String
+  targetType  String    // POST, COMMENT, USER, QUESTION, RESOURCE
+  targetId    String
+  reason      String    // SPAM, HARASSMENT, INAPPROPRIATE, MISLEADING, OTHER
+  details     String?
+  status      String    @default("PENDING") // PENDING, RESOLVED, DISMISSED
+  resolvedById String?
+  createdAt   DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reporter    User      @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  resolvedBy  User?     @relation("ReportResolver", fields: [resolvedById], references: [id])
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+// 29. Study Group Entity
+model StudyGroup {
+  id          String                 @id @default(cuid())
+  workspaceId String
+  subjectId   String?
+  name        String
+  description String?
+  maxMembers  Int                    @default(8)
+  leaderId    String
+  createdAt   DateTime               @default(now())
+
+  workspace   Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subject     Subject?               @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  leader      User                   @relation("GroupLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  members     StudyGroupMembership[]
+
+  @@index([workspaceId])
+}
+
+// 30. Study Group Membership Entity
+model StudyGroupMembership {
+  id           String     @id @default(cuid())
+  studyGroupId String
+  userId       String
+  role         String     @default("MEMBER") // LEADER, MEMBER
+  joinedAt     DateTime   @default(now())
+
+  studyGroup   StudyGroup @relation(fields: [studyGroupId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([studyGroupId, userId])
+  @@index([studyGroupId])
+}
+
+// 31. Channel Message Entity
+model Message {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  channel         String    // general, academics, programming, projects, random
+  senderId        String
+  content         String
+  attachmentsJson String?
+  createdAt       DateTime  @default(now())
+
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sender          User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([channel])
+}
+
+// 32. Message Participant Tracking Entity
+model MessageParticipant {
+  id          String    @id @default(cuid())
+  workspaceId String
+  channel     String
+  userId      String
+  lastReadAt  DateTime  @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, channel, userId])
+  @@index([workspaceId])
+}
+
+// 33. Faculty Join Request Entity
+model FacultyJoinRequest {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  facultyName  String
+  facultyEmail String
+  department   String
+  subject      String
+  message      String?
+  status       String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  reviewedById String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reviewedBy   User?     @relation("ReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([workspaceId])
+  @@index([status])
+}
+
+// 34. Audit Log Entity
+model AuditLog {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  actorId          String
+  action           String    // TIMETABLE_UPDATE, ROLE_CHANGE, ANNOUNCEMENT_DELETE, FACULTY_APPROVE, STUDENT_IMPORT, etc.
+  targetType       String
+  targetId         String
+  previousStateJson String?
+  newStateJson     String?
+  ipAddress        String?
+  userAgent        String?
+  createdAt        DateTime  @default(now())
+
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor            User      @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([actorId])
+  @@index([action])
+}
+
+// 35. User Preferences Entity
+model UserPreference {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  language    String   @default("en") // en, te, hi
+  theme       String   @default("system") // light, dark, system
+  emailDigest String   @default("DAILY") // NONE, DAILY, WEEKLY
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 36. Notification Preferences Entity
+model NotificationPreference {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  announcements Boolean  @default(true)
+  assignments   Boolean  @default(true)
+  exams         Boolean  @default(true)
+  timetable     Boolean  @default(true)
+  mentions      Boolean  @default(true)
+  requests      Boolean  @default(true)
+  emailEnabled  Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 37. Workspace Settings Entity
+model WorkspaceSettings {
+  id                     String    @id @default(cuid())
+  workspaceId            String    @unique
+  allowStudentPosts      Boolean   @default(true)
+  allowAnonymousFeedback Boolean   @default(true)
+  defaultTimetableSlots  Int       @default(7)
+  notificationEmailSender String?
+  customDomain           String?
+  attendanceThreshold    Float     @default(75.0)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+// Personal Google Classroom connections and per-user, per-workspace cache.
+model GoogleClassroomUserConnection {
+  id                     String   @id @default(cuid())
+  userId                 String
+  workspaceId            String
+  googleSubjectId        String
+  googleEmail            String
+  status                 String   @default("SYNCING") // SYNCING, CONNECTED, SYNC_FAILED, REAUTH_REQUIRED, DISCONNECTED
+  encryptedAccessToken  String?
+  encryptedRefreshToken String?
+  accessTokenExpiresAt  DateTime?
+  grantedScopesJson      String   @default("[]")
+  lastSyncAt             DateTime?
+  disconnectedAt         DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  courses                GoogleClassroomCourse[]
+  announcements          GoogleClassroomAnnouncement[]
+  coursework             GoogleClassroomCoursework[]
+  materials              GoogleClassroomMaterial[]
+  topics                 GoogleClassroomTopic[]
+  submissions            GoogleClassroomSubmission[]
+  syncLogs               GoogleClassroomSyncLog[]
+  notifications          GoogleClassroomNotification[]
+  attachments            GoogleClassroomAttachment[]
+
+  @@unique([userId, workspaceId])
+  @@unique([workspaceId, googleSubjectId])
+  @@index([workspaceId, status])
+}
+
+model GoogleClassroomCourse {
+  id              String   @id @default(cuid())
+  connectionId    String
+  userId          String
+  workspaceId     String
+  googleCourseId  String
+  name            String
+  section         String?
+  room            String?
+  description     String?
+  descriptionHeading String?
+  ownerGoogleUserId String?
+  courseState     String?
+  alternateLink   String?
+  googleCreatedAt DateTime?
+  lastUpdatedAt   DateTime?
+  lastSeenAt      DateTime?
+  isRemoved       Boolean  @default(false)
+  removedAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  connection      GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  coursework      GoogleClassroomCoursework[]
+  announcements   GoogleClassroomAnnouncement[]
+  materials       GoogleClassroomMaterial[]
+  topics          GoogleClassroomTopic[]
+
+  @@unique([connectionId, googleCourseId])
+  @@index([userId, workspaceId])
+  @@index([connectionId, courseState])
+}
+
+model GoogleClassroomAnnouncement {
+  id                     String   @id @default(cuid())
+  connectionId           String
+  courseId               String
+  userId                 String
+  workspaceId            String
+  googleAnnouncementId   String
+  text                   String
+  state                  String?
+  topicId                String?
+  materialsJson          String   @default("[]")
+  alternateLink          String?
+  googleCreatedAt        DateTime?
+  googleUpdatedAt        DateTime?
+  lastSeenAt             DateTime?
+  isRemoved              Boolean  @default(false)
+  removedAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  connection             GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  course                 GoogleClassroomCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user                   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, googleAnnouncementId])
+  @@index([userId, workspaceId, googleCreatedAt])
+  @@index([courseId])
+}
+
+model GoogleClassroomCoursework {
+  id                     String   @id @default(cuid())
+  connectionId           String
+  courseId               String
+  userId                 String
+  workspaceId            String
+  googleCourseworkId     String
+  title                  String
+  description            String?
+  state                  String?
+  workType               String?
+  topicId                String?
+  dueDateJson            String?
+  dueTimeJson            String?
+  maxPoints              Float?
+  materialsJson          String   @default("[]")
+  alternateLink          String?
+  googleCreatedAt        DateTime?
+  googleUpdatedAt        DateTime?
+  lastSeenAt             DateTime?
+  isRemoved              Boolean  @default(false)
+  removedAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  connection             GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  course                 GoogleClassroomCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user                   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  submissions            GoogleClassroomSubmission[]
+
+  @@unique([connectionId, googleCourseworkId])
+  @@index([userId, workspaceId, googleUpdatedAt])
+  @@index([courseId, topicId])
+}
+
+model GoogleClassroomMaterial {
+  id                     String   @id @default(cuid())
+  connectionId           String
+  courseId               String
+  userId                 String
+  workspaceId            String
+  googleMaterialId       String
+  title                  String?
+  description            String?
+  state                  String?
+  topicId                String?
+  materialsJson          String   @default("[]")
+  alternateLink          String?
+  googleCreatedAt        DateTime?
+  googleUpdatedAt        DateTime?
+  lastSeenAt             DateTime?
+  isRemoved              Boolean  @default(false)
+  removedAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  connection             GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  course                 GoogleClassroomCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user                   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, googleMaterialId])
+  @@index([userId, workspaceId, googleCreatedAt])
+  @@index([courseId, topicId])
+}
+
+model GoogleClassroomTopic {
+  id              String   @id @default(cuid())
+  connectionId    String
+  courseId        String
+  userId          String
+  workspaceId     String
+  googleTopicId   String
+  name            String
+  position        Int?
+  lastSeenAt      DateTime?
+  isRemoved       Boolean  @default(false)
+  removedAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  connection      GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  course          GoogleClassroomCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, googleTopicId])
+  @@index([userId, workspaceId])
+  @@index([courseId, position])
+}
+
+model GoogleClassroomSubmission {
+  id                       String   @id @default(cuid())
+  connectionId             String
+  courseworkId             String
+  userId                   String
+  workspaceId              String
+  googleSubmissionId       String
+  state                    String?
+  late                     Boolean?
+  assignedGrade            Float?
+  alternateLink            String?
+  googleCreatedAt          DateTime?
+  googleUpdatedAt          DateTime?
+  lastSeenAt               DateTime?
+  isRemoved                Boolean  @default(false)
+  removedAt                DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  connection               GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  coursework               GoogleClassroomCoursework @relation(fields: [courseworkId], references: [id], onDelete: Cascade)
+  user                     User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace                Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, googleSubmissionId])
+  @@index([userId, workspaceId, state])
+  @@index([courseworkId])
+}
+
+model GoogleClassroomSyncLog {
+  id            String   @id @default(cuid())
+  connectionId  String
+  userId        String
+  workspaceId   String
+  status        String
+  errorCode     String?
+  summaryJson   String?
+  warningsJson String   @default("[]")
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
+
+  connection    GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([userId, workspaceId, startedAt])
+}
+
+model GoogleClassroomNotification {
+  id            String   @id @default(cuid())
+  connectionId  String
+  userId        String
+  workspaceId   String
+  resourceType  String
+  resourceId    String
+  title         String
+  message       String
+  seenAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  connection    GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, resourceType, resourceId])
+  @@index([userId, workspaceId, seenAt])
+}
+
+model GoogleClassroomAttachment {
+  id                   String   @id @default(cuid())
+  connectionId         String
+  userId               String
+  workspaceId          String
+  parentType           String
+  parentId             String
+  googleAttachmentId   String
+  attachmentType       String
+  title                String?
+  description          String?
+  url                  String?
+  thumbnailUrl         String?
+  driveFileId          String?
+  metadataJson         String   @default("{}")
+  lastSeenAt           DateTime?
+  isRemoved            Boolean  @default(false)
+  removedAt            DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  connection           GoogleClassroomUserConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  user                 User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, parentType, parentId, googleAttachmentId])
+  @@index([userId, workspaceId, attachmentType])
+  @@index([connectionId, parentType, parentId])
+}

@@ -1,0 +1,43 @@
+{
+  "name": "section-connect",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "prisma db push",
+    "db:seed": "node scripts/bootstrap.mjs",
+    "db:seed:reset": "node scripts/seed.mjs --reset",
+    "classroom:sync-worker": "node scripts/google-classroom-sync-worker.mjs",
+    "db:studio": "prisma studio",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "canvas-confetti": "^1.9.4",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.4.7",
+    "google-auth-library": "^11.1.0",
+    "lucide-react": "^0.475.0",
+    "next": "^15.1.7",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^22.13.4",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.2",
+    "prisma": "^6.4.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3"
+  }
+}

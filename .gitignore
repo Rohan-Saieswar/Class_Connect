@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.next-dev/
+out/
+build/
+dist/
+coverage/
+
+# Environment files can contain credentials. Keep the example template tracked.
+.env
+.env.*
+.env*.local
+!.env.example
+!.env.*.example
