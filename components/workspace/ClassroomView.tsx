@@ -1,7 +1,7 @@
 "use client";
-
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BookOpen, CalendarClock, Check, ExternalLink, FileText, GraduationCap, LoaderCircle, RefreshCw, Unplug } from "lucide-react";
+import { ArrowLeft, BookOpen, CalendarClock, Check, ExternalLink, FileText, GraduationCap, LoaderCircle, RefreshCw, Unplug } from "lucide-react";
 
 type ClassroomStatus = {
   connected: boolean;
@@ -97,18 +97,38 @@ export default function ClassroomView({ section, workspaceName, displayName, con
     try {
       const response = await fetch(`/api/${encodeURIComponent(section)}/classroom`, { cache: "no-store" });
       const nextStatus = await response.json();
-      if (!response.ok) throw new Error(nextStatus.error || "Classroom status could not be loaded.");
+      if (!response.ok) {
+        if (response.status === 409 || (nextStatus.error && nextStatus.error.includes("Connect Google Classroom first"))) {
+          setStatus({ connected: false });
+          setData(null);
+          return;
+        }
+        throw new Error(nextStatus.error || "Classroom status could not be loaded.");
+      }
       setStatus(nextStatus);
-      if (nextStatus.connected || ["DISCONNECTED", "REAUTH_REQUIRED", "SYNC_FAILED"].includes(nextStatus.status)) {
+      if (nextStatus.connected) {
         const dataResponse = await fetch(`/api/${encodeURIComponent(section)}/classroom/data`, { cache: "no-store" });
         const nextData = await dataResponse.json();
-        if (!dataResponse.ok) throw new Error(nextData.error || "Classroom data could not be loaded.");
+        if (!dataResponse.ok) {
+          if (dataResponse.status === 409 || (nextData.error && nextData.error.includes("Connect Google Classroom first"))) {
+            setStatus({ connected: false });
+            setData(null);
+            return;
+          }
+          throw new Error(nextData.error || "Classroom data could not be loaded.");
+        }
         setData(nextData);
       } else {
         setData(null);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Classroom could not be loaded.");
+      const msg = error instanceof Error ? error.message : "Classroom could not be loaded.";
+      if (msg.includes("Connect Google Classroom first")) {
+        setStatus({ connected: false });
+        setData(null);
+      } else {
+        setMessage(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -142,13 +162,24 @@ export default function ClassroomView({ section, workspaceName, displayName, con
       const response = await fetch(`/api/${encodeURIComponent(section)}/classroom`, { method: "POST" });
       const result = await response.json();
       if (!response.ok) {
+        if (response.status === 409 || (result.error && result.error.includes("Connect Google Classroom first"))) {
+          setStatus({ connected: false });
+          setData(null);
+          setMessage("Connect Google Classroom first.");
+          return;
+        }
         if (response.status === 401) await load();
         throw new Error(result.error || "Classroom sync failed.");
       }
       await load();
       setMessage("Classroom sync completed.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Classroom sync failed.");
+      const msg = error instanceof Error ? error.message : "Classroom sync failed.";
+      if (msg.includes("Connect Google Classroom first")) {
+        setStatus({ connected: false });
+        setData(null);
+      }
+      setMessage(msg);
     } finally {
       setSyncing(false);
     }
@@ -201,10 +232,17 @@ export default function ClassroomView({ section, workspaceName, displayName, con
         <header className="flex flex-wrap items-end justify-between gap-4 border-b pb-5" style={{ borderColor: "var(--border-subtle)" }}>
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-[#842343]"><GraduationCap size={18} /> Google Classroom</div>
+            <Link
+              href={`/${section.toLowerCase()}`}
+              className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-[#842343] hover:underline"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to dashboard
+            </Link>
             <h1 className="mt-2 font-serif text-3xl sm:text-4xl">My Google Classroom</h1>
             <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>Your Google Classroom, connected to {workspaceName} · {displayName}.</p>
           </div>
-          {status?.connected && (
+          {status?.connected ? (
             <div className="flex flex-wrap gap-2">
               <button className={`${buttonClass} border-[#d9d3ce]`} style={{ color: "var(--text-primary)" }} disabled={syncing} onClick={syncNow}>
                 {syncing ? <LoaderCircle size={15} className="animate-spin" /> : <RefreshCw size={15} />}{syncing ? "Syncing…" : "Sync Now"}
@@ -212,11 +250,11 @@ export default function ClassroomView({ section, workspaceName, displayName, con
               <button className={`${buttonClass} border-[#d9d3ce]`} style={{ color: "var(--text-primary)" }} onClick={() => setSettingsOpen(!settingsOpen)}>Settings</button>
               <button className={`${buttonClass} border-[#d9d3ce] text-[#842343]`} onClick={disconnect}><Unplug size={15} />Disconnect</button>
             </div>
-          )}
-          {status && !status.connected && (
-            status.status === "SYNC_FAILED"
-              ? <button onClick={syncNow} disabled={syncing} className="inline-flex h-10 items-center gap-2 bg-[#842343] px-4 text-sm font-semibold text-white hover:bg-[#681a35] disabled:opacity-60">{syncing ? "Syncing…" : "Retry sync"}<RefreshCw size={14} /></button>
-              : <a href={`/api/${encodeURIComponent(section)}/classroom/connect`} className="inline-flex h-10 items-center gap-2 bg-[#842343] px-4 text-sm font-semibold text-white hover:bg-[#681a35]">{status.status === "REAUTH_REQUIRED" ? "Reconnect Google Classroom" : "Connect Google Classroom"}<ExternalLink size={14} /></a>
+          ) : (
+            <a href={`/api/${encodeURIComponent(section)}/classroom/connect`} className="inline-flex h-10 items-center gap-2 bg-[#842343] px-4 text-sm font-semibold text-white hover:bg-[#681a35]">
+              {status?.status === "REAUTH_REQUIRED" ? "Reconnect Google Classroom" : "Connect Google Classroom"}
+              <ExternalLink size={14} />
+            </a>
           )}
         </header>
 
@@ -226,11 +264,11 @@ export default function ClassroomView({ section, workspaceName, displayName, con
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading Google Classroom">
             {[0, 1, 2].map((item) => <div key={item} className="h-32 animate-pulse border" style={{ ...cardStyle, background: "var(--bg-secondary)" }} />)}
           </div>
-        ) : !status?.connected && !data ? (
+        ) : !status?.connected ? (
           <section className="grid min-h-[360px] place-items-center border px-6 py-12 text-center" style={cardStyle}>
             <div className="max-w-xl">
               <div className="mx-auto grid h-14 w-14 place-items-center border border-[#842343]/20 bg-[#842343]/5 text-[#842343]"><BookOpen size={25} /></div>
-              <h2 className="mt-5 font-serif text-2xl">{status?.status === "REAUTH_REQUIRED" ? "Reconnect Google Classroom" : status?.status === "SYNC_FAILED" ? "Classroom sync needs attention" : "My Google Classroom isn’t connected yet."}</h2>
+              <h2 className="mt-5 font-serif text-2xl">{status?.status === "REAUTH_REQUIRED" ? "Reconnect Google Classroom" : "My Google Classroom isn’t connected yet."}</h2>
               <p className="mt-3 text-sm leading-6" style={{ color: "var(--text-secondary)" }}>Connect your Google Classroom account to see your courses, announcements, assignments, materials, deadlines and submissions here.</p>
               <a href={`/api/${encodeURIComponent(section)}/classroom/connect`} className="mt-6 inline-flex h-11 items-center gap-2 bg-[#842343] px-5 text-sm font-semibold text-white hover:bg-[#681a35]">Connect Google Classroom <ExternalLink size={15} /></a>
             </div>
@@ -289,11 +327,11 @@ export default function ClassroomView({ section, workspaceName, displayName, con
 
             {tab === "Announcements" && <div className="space-y-3">{announcements.filter((item) => matches(`${item.text} ${item.course.name} ${attachments.filter((attachment) => attachment.parentType === "ANNOUNCEMENT" && attachment.parentId === item.googleAnnouncementId).map((attachment) => attachment.title || "").join(" ")}`)).map((item) => <article key={item.id} className="border p-5" style={cardStyle}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">Google Classroom · {item.course.name}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{item.text}</p><p className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>{formatDate(item.googleCreatedAt)}{topicName(item.topicId) ? ` · ${topicName(item.topicId)}` : ""}</p><AttachmentList attachments={attachments.filter((attachment) => attachment.parentType === "ANNOUNCEMENT" && attachment.parentId === item.googleAnnouncementId)} />{item.alternateLink && <OpenLink href={item.alternateLink} label="Open in Google Classroom" />}</article>)}{announcements.length === 0 && <Empty text="No announcements are available." onRefresh={syncNow} />}</div>}
 
-            {tab === "Assignments" && <div className="space-y-3">{coursework.filter((item) => (topicFilter === "all" || item.topicId === topicFilter) && matches(`${item.title} ${item.description || ""} ${item.course.name} ${attachments.filter((attachment) => attachment.parentType === "COURSEWORK" && attachment.parentId === item.googleCourseworkId).map((attachment) => attachment.title || "").join(" ")}`)).map((item) => { const submission = item.submissions[0]; return <article key={item.id} className="border p-5" style={cardStyle}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">Google Classroom · {item.course.name}</p><h2 className="mt-2 font-serif text-xl">{item.title}</h2>{item.description && <p className="mt-2 whitespace-pre-wrap text-sm leading-6" style={{ color: "var(--text-secondary)" }}>{item.description}</p>}<div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs" style={{ color: "var(--text-muted)" }}><span>Due {formatDate(dueDateFor(item)?.toISOString())}</span>{item.maxPoints !== null && <span>Maximum points: {item.maxPoints}</span>}{topicName(item.topicId) && <span>{topicName(item.topicId)}</span>}<span>{submission?.state || "No submission status"}</span>{submission?.late && <span className="text-[#a3324d]">Late</span>}</div><AttachmentList attachments={attachments.filter((attachment) => attachment.parentType === "COURSEWORK" && attachment.parentId === item.googleCourseworkId)} />{submission?.assignedGrade !== null && submission?.assignedGrade !== undefined && <p className="mt-3 text-sm font-medium">Google Classroom Grade: {submission.assignedGrade}{item.maxPoints ? ` / ${item.maxPoints}` : ""}</p>}<OpenLink href={submission?.alternateLink || item.alternateLink || classroomHome} label="Open Assignment in Classroom" /></article>})}{coursework.length === 0 && <Empty text="No coursework is available." onRefresh={syncNow} />}</div>}
+            {tab === "Assignments" && <div className="space-y-3">{coursework.filter((item) => (topicFilter === "all" || item.topicId === topicFilter) && matches(`${item.title} ${item.description || ""} ${item.course.name} ${attachments.filter((attachment) => attachment.parentType === "COURSEWORK" && attachment.parentId === item.googleCourseworkId).map((attachment) => attachment.title || "").join(" ")}`)).map((item) => { const submission = item.submissions[0]; return <article key={item.id} className="border p-5" style={cardStyle}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">Google Classroom · {item.course.name}</p><h2 className="mt-2 font-serif text-xl">{item.title}</h2>{item.description && <p className="mt-2 whitespace-pre-wrap text-sm leading-6" style={{ color: "var(--text-secondary)" }}>{item.description}</p>}<div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs" style={{ color: "var(--text-muted)" }}><span>Due {formatDate(dueDateFor(item)?.toISOString())}</span>{item.maxPoints !== null && <span>Maximum points: {item.maxPoints}</span>}{topicName(item.topicId) && <span>{topicName(item.topicId)}</span>}<span>{submission?.state || "No submission status"}</span>{submission?.late && <span className="text-[#a3324d]">Late</span>}</div><AttachmentList attachments={attachments.filter((attachment) => attachment.parentType === "COURSEWORK" && attachment.parentId === item.googleCourseworkId)} />{submission?.assignedGrade !== null && submission?.assignedGrade !== undefined && <p className="mt-3 text-sm font-medium">Google Classroom Grade: {submission.assignedGrade}{item.maxPoints ? ` / ${item.maxPoints}` : ""}</p>}<OpenLink href={submission?.alternateLink || item.alternateLink || classroomHome} label="Open Assignment in Classroom" /></article> })}{coursework.length === 0 && <Empty text="No coursework is available." onRefresh={syncNow} />}</div>}
 
             {tab === "Materials" && <div className="grid gap-3 sm:grid-cols-2">{materials.filter((item) => (topicFilter === "all" || item.topicId === topicFilter) && matches(`${item.title || ""} ${item.description || ""} ${item.course.name}`)).map((item) => <article key={item.id} className="border p-5" style={cardStyle}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">Google Classroom · {item.course.name}</p><h2 className="mt-2 font-serif text-lg">{item.title || "Course material"}</h2>{item.description && <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>{item.description}</p>}<AttachmentList attachments={attachments.filter((attachment) => attachment.parentType === "COURSEWORK_MATERIAL" && attachment.parentId === item.googleMaterialId)} /><p className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>{topicName(item.topicId) || "No topic"} · {formatDate(item.googleCreatedAt)}</p></article>)}{materials.length === 0 && <Empty text="No materials are available." onRefresh={syncNow} />}</div>}
 
-            {tab === "Attachments" && <div className="grid gap-3 sm:grid-cols-2">{attachments.filter((item) => matches(`${item.title || ""} ${item.description || ""} ${item.attachmentType} ${item.parentType}`)).map((item) => { const parentLink = item.parentType === "ANNOUNCEMENT" ? announcements.find(value => value.googleAnnouncementId === item.parentId)?.alternateLink : item.parentType === "COURSEWORK" ? coursework.find(value => value.googleCourseworkId === item.parentId)?.alternateLink : classroomHome; return <article key={item.id} className="border p-5" style={cardStyle}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">Google Classroom · {item.attachmentType.replaceAll("_", " ").toLowerCase()}</p><h2 className="mt-2 font-serif text-lg">{item.title || "Classroom attachment"}</h2>{item.description && <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>{item.description}</p>}{item.thumbnailUrl && <img src={item.thumbnailUrl} alt="" className="mt-3 max-h-40 w-full object-contain object-left" />}<OpenLink href={safeResourceUrl(item.url) || parentLink || classroomHome} label={safeResourceUrl(item.url) ? "Open resource" : "Open in Google Classroom"} /></article>})}{attachments.length === 0 && <Empty text="No attachments are available." onRefresh={syncNow} />}</div>}
+            {tab === "Attachments" && <div className="grid gap-3 sm:grid-cols-2">{attachments.filter((item) => matches(`${item.title || ""} ${item.description || ""} ${item.attachmentType} ${item.parentType}`)).map((item) => { const parentLink = item.parentType === "ANNOUNCEMENT" ? announcements.find(value => value.googleAnnouncementId === item.parentId)?.alternateLink : item.parentType === "COURSEWORK" ? coursework.find(value => value.googleCourseworkId === item.parentId)?.alternateLink : classroomHome; return <article key={item.id} className="border p-5" style={cardStyle}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">Google Classroom · {item.attachmentType.replaceAll("_", " ").toLowerCase()}</p><h2 className="mt-2 font-serif text-lg">{item.title || "Classroom attachment"}</h2>{item.description && <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>{item.description}</p>}{item.thumbnailUrl && <img src={item.thumbnailUrl} alt="" className="mt-3 max-h-40 w-full object-contain object-left" />}<OpenLink href={safeResourceUrl(item.url) || parentLink || classroomHome} label={safeResourceUrl(item.url) ? "Open resource" : "Open in Google Classroom"} /></article> })}{attachments.length === 0 && <Empty text="No attachments are available." onRefresh={syncNow} />}</div>}
 
             {tab === "Topics" && <div className="grid gap-3 sm:grid-cols-2">{topics.map((topic) => <button key={topic.googleTopicId} className="border p-5 text-left" style={cardStyle} onClick={() => { setTopicFilter(topic.googleTopicId); setTab("Assignments"); }}><p className="text-xs font-semibold uppercase tracking-wide text-[#842343]">{topic.course.name}</p><h2 className="mt-2 font-serif text-xl">{topic.name}</h2><p className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>View coursework in this topic</p></button>)}{topics.length === 0 && <Empty text="No topics are available." onRefresh={syncNow} />}</div>}
 

@@ -1,143 +1,169 @@
-
 "use client";
+import { useEffect, useState } from "react";
 import type { WorkspaceBranding } from "@/lib/branding";
 
 interface Props { branding: WorkspaceBranding; }
 
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const SLOTS = ["8:00–8:50", "9:00–9:50", "10:00–10:50", "11:00–11:50", "12:00–12:50", "2:00–2:50", "3:00–3:50"];
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const TIMETABLE: Record<string, Record<string, { subject: string; room: string; type: string } | null>> = {
+const SLOTS = [
+  { no: 1, time: "09:00 – 09:50" },
+  { no: 2, time: "10:00 – 10:50" },
+  { no: 3, time: "11:00 – 11:50" },
+  { no: 4, time: "12:00 – 12:50" },
+  { no: 5, time: "01:00 – 01:50" },
+  { no: 6, time: "02:00 – 02:50" },
+  { no: 7, time: "03:00 – 03:50" },
+  { no: 8, time: "04:00 – 05:30" },
+];
+
+type Subject = { code: string; name: string; ltpc: string; faculty: string; color: string };
+
+const SUBJECTS: Subject[] = [
+  { code: "AEC 101", name: "Art of Listening, Speaking and Reading Skills", ltpc: "1-1-0-2", faculty: "Dr. Ashwathi", color: "#db2777" },
+  { code: "CSE 101", name: "Fundamentals of Computing and Programming in C", ltpc: "3-0-1-5", faculty: "Dr. Sushovan Khatua, Mr. Kammula Sunil Kumar", color: "#4f46e5" },
+  { code: "FIC 102", name: "Engineering Physics", ltpc: "2-0-1-3", faculty: "Dr. Argha Jit Jana", color: "#0d9488" },
+  { code: "FIC 103", name: "Calculus for Engineers", ltpc: "3-0-0-3", faculty: "Dr. Deeptajyoti Sen", color: "#d97706" },
+  { code: "SEC 101", name: "Analytical Reasoning and Aptitude Skills - I", ltpc: "1-0-1-2", faculty: "Mr. Skilling Course", color: "#7c3aed" },
+  { code: "VAC 101", name: "Environmental Science", ltpc: "2-0-0-2", faculty: "Dr. Prasun Goswami", color: "#16a34a" },
+];
+
+const byCode = (code: string) => SUBJECTS.find((s) => s.code === code)!;
+
+// Keyed by slot number (1 to 8), copied from the SRM student portal timetable.
+type Entry = { code: string; room: string };
+const TIMETABLE: Record<string, Record<number, Entry>> = {
   Monday: {
-    "8:00–8:50":    { subject: "Data Structures", room: "LH-301", type: "Lecture" },
-    "9:00–9:50":    { subject: "Machine Learning", room: "LH-301", type: "Lecture" },
-    "10:00–10:50":  { subject: "DS Lab", room: "CS Lab-1", type: "Lab" },
-    "11:00–11:50":  { subject: "DS Lab", room: "CS Lab-1", type: "Lab" },
-    "12:00–12:50":  null,
-    "2:00–2:50":    { subject: "Algorithm Design", room: "LH-302", type: "Lecture" },
-    "3:00–3:50":    { subject: "Professional Skills", room: "LH-201", type: "Lecture" },
+    1: { code: "FIC 102", room: "V306" }, 2: { code: "FIC 102", room: "V306" },
+    5: { code: "CSE 101", room: "V401" }, 6: { code: "CSE 101", room: "V401" },
   },
   Tuesday: {
-    "8:00–8:50":    { subject: "Machine Learning", room: "LH-301", type: "Lecture" },
-    "9:00–9:50":    { subject: "Database Systems", room: "LH-302", type: "Lecture" },
-    "10:00–10:50":  { subject: "ML Lab", room: "CS Lab-2", type: "Lab" },
-    "11:00–11:50":  { subject: "ML Lab", room: "CS Lab-2", type: "Lab" },
-    "12:00–12:50":  null,
-    "2:00–2:50":    { subject: "Algorithm Design", room: "LH-302", type: "Lecture" },
-    "3:00–3:50":    null,
+    1: { code: "CSE 101", room: "V106" }, 2: { code: "CSE 101", room: "V106" },
+    7: { code: "FIC 102", room: "V401" },
   },
   Wednesday: {
-    "8:00–8:50":    { subject: "Data Structures", room: "LH-301", type: "Lecture" },
-    "9:00–9:50":    { subject: "Database Systems", room: "LH-302", type: "Lecture" },
-    "10:00–10:50":  null,
-    "11:00–11:50":  { subject: "Machine Learning", room: "LH-301", type: "Lecture" },
-    "12:00–12:50":  null,
-    "2:00–2:50":    { subject: "Database Lab", room: "CS Lab-1", type: "Lab" },
-    "3:00–3:50":    { subject: "Database Lab", room: "CS Lab-1", type: "Lab" },
+    2: { code: "FIC 103", room: "V401" }, 3: { code: "FIC 103", room: "V401" },
+    4: { code: "CSE 101", room: "V401" },
   },
   Thursday: {
-    "8:00–8:50":    { subject: "Algorithm Design", room: "LH-302", type: "Lecture" },
-    "9:00–9:50":    { subject: "Data Structures", room: "LH-301", type: "Lecture" },
-    "10:00–10:50":  { subject: "Professional Skills", room: "LH-201", type: "Lecture" },
-    "11:00–11:50":  null,
-    "12:00–12:50":  null,
-    "2:00–2:50":    { subject: "Elective", room: "LH-304", type: "Lecture" },
-    "3:00–3:50":    { subject: "Elective", room: "LH-304", type: "Lecture" },
+    1: { code: "VAC 101", room: "V401" }, 2: { code: "VAC 101", room: "V401" },
+    3: { code: "CSE 101", room: "V603" }, 4: { code: "CSE 101", room: "V603" },
+    8: { code: "SEC 101", room: "V401" },
   },
   Friday: {
-    "8:00–8:50":    { subject: "Database Systems", room: "LH-302", type: "Lecture" },
-    "9:00–9:50":    { subject: "Machine Learning", room: "LH-301", type: "Lecture" },
-    "10:00–10:50":  null,
-    "11:00–11:50":  { subject: "Data Structures", room: "LH-301", type: "Lecture" },
-    "12:00–12:50":  null,
-    "2:00–2:50":    null,
-    "3:00–3:50":    null,
+    1: { code: "AEC 101", room: "V401" }, 2: { code: "AEC 101", room: "V401" },
+    4: { code: "FIC 102", room: "V401" },
+    7: { code: "FIC 103", room: "V401" },
+    8: { code: "SEC 101", room: "V401" },
   },
+  Saturday: {},
 };
 
-const SUBJECT_COLORS: Record<string, string> = {
-  "Data Structures": "#6366f1",
-  "Machine Learning": "#10b981",
-  "Algorithm Design": "#f59e0b",
-  "Database Systems": "#06b6d4",
-  "DS Lab": "#8b5cf6",
-  "ML Lab": "#14b8a6",
-  "Database Lab": "#0ea5e9",
-  "Professional Skills": "#ec4899",
-  "Elective": "#84cc16",
-};
+export default function TimetableView({ branding: _branding }: Props) {
+  const [today, setToday] = useState<string | null>(null);
 
-const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  // Read today's day in the browser only, to avoid a server/client mismatch.
+  useEffect(() => {
+    setToday(new Date().toLocaleDateString("en-US", { weekday: "long" }));
+  }, []);
 
-export default function TimetableView({ branding }: Props) {
   return (
-    <div className="max-w-6xl mx-auto animate-fade-in">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>🗓️ Class Timetable</h2>
-        <div className="flex items-center gap-2 text-sm" style={{ color: "var(--text-muted)" }}>
-          <span>Today:</span>
-          <span className="font-semibold" style={{ color: branding.accentColor }}>{today}</span>
-        </div>
-      </div>
+    <div className="space-y-8">
       <div
-        className="rounded-2xl overflow-hidden"
-        style={{ border: "1px solid var(--border-subtle)", background: "var(--bg-card)" }}
+        className="overflow-x-auto rounded-2xl border"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-primary)" }}
       >
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr style={{ background: "var(--bg-primary)" }}>
-                <th className="px-4 py-3 text-left font-semibold" style={{ color: "var(--text-muted)", width: "120px" }}>Time</th>
-                {DAYS.map(d => (
-                  <th
-                    key={d}
-                    className="px-4 py-3 text-left font-semibold"
-                    style={{
-                      color: d === today ? branding.accentColor : "var(--text-secondary)",
-                      background: d === today ? branding.accentColor + "15" : undefined,
-                    }}
-                  >
-                    {d}
-                    {d === today && <span className="ml-1 text-xs">(Today)</span>}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {SLOTS.map((slot, si) => (
-                <tr key={slot} style={{ borderTop: "1px solid var(--border-subtle)" }}>
-                  <td className="px-4 py-3 text-xs font-medium" style={{ color: "var(--text-muted)" }}>{slot}</td>
-                  {DAYS.map(day => {
-                    const cell = TIMETABLE[day]?.[slot];
-                    const color = cell ? (SUBJECT_COLORS[cell.subject] || branding.accentColor) : branding.accentColor;
-                    return (
-                      <td
-                        key={day}
-                        className="px-3 py-2"
-                        style={{ background: day === today ? branding.accentColor + "08" : undefined }}
-                      >
-                        {cell ? (
-                          <div
-                            className="rounded-lg px-3 py-2"
-                            style={{ background: color + "18", borderLeft: `3px solid ${color}` }}
-                          >
-                            <p className="font-semibold text-xs" style={{ color }}>{cell.subject}</p>
-                            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{cell.room}</p>
-                            <p className="text-xs" style={{ color: "var(--text-muted)", opacity: 0.7 }}>{cell.type}</p>
-                          </div>
-                        ) : (
-                          <div className="h-full flex items-center justify-center">
-                            <span className="text-xs" style={{ color: "var(--border-medium)" }}>—</span>
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
+        <table className="w-full min-w-[960px] border-collapse text-sm">
+          <thead>
+            <tr>
+              <th className="w-28 border-b p-3 text-left font-semibold" style={{ borderColor: "var(--border-subtle)" }}>
+                Day
+              </th>
+              {SLOTS.map((s) => (
+                <th key={s.no} className="border-b border-l p-3 text-center" style={{ borderColor: "var(--border-subtle)" }}>
+                  <div className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>
+                    Slot {s.no}
+                  </div>
+                  <div className="font-semibold">{s.time}</div>
+                </th>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </tr>
+          </thead>
+          <tbody>
+            {DAYS.map((d) => (
+              <tr key={d} style={today === d ? { background: "rgba(132, 35, 67, 0.06)" } : undefined}>
+                <th
+                  className="border-b p-3 text-left font-semibold"
+                  style={{ borderColor: "var(--border-subtle)", color: today === d ? "#842343" : undefined }}
+                >
+                  {d}
+                  {today === d && (
+                    <span className="ml-2 rounded-full bg-[#842343] px-2 py-0.5 text-[10px] font-semibold text-white">
+                      Today
+                    </span>
+                  )}
+                </th>
+                {SLOTS.map((s) => {
+                  const entry = TIMETABLE[d]?.[s.no];
+                  const subject = entry ? byCode(entry.code) : null;
+                  return (
+                    <td
+                      key={s.no}
+                      className="h-20 border-b border-l p-1.5 align-middle"
+                      style={{ borderColor: "var(--border-subtle)" }}
+                    >
+                      {entry && subject ? (
+                        <div
+                          className="h-full rounded-lg border-l-4 px-2 py-1.5 text-center"
+                          style={{ background: `${subject.color}1f`, borderLeftColor: subject.color }}
+                        >
+                          <div className="font-semibold" style={{ color: subject.color }}>{entry.code}</div>
+                          <div className="text-xs" style={{ color: "var(--text-secondary)" }}>{entry.room}</div>
+                        </div>
+                      ) : (
+                        <div className="text-center" style={{ color: "var(--text-secondary)" }}>–</div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>))}
+          </tbody>
+        </table>
+      </div>
+
+      <div
+        className="overflow-x-auto rounded-2xl border"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-primary)" }}
+      >
+        <table className="w-full min-w-[640px] border-collapse text-sm">
+          <thead>
+            <tr style={{ background: "rgba(132, 35, 67, 0.06)" }}>
+              <th className="p-3 text-left font-semibold">Subject</th>
+              <th className="p-3 text-left font-semibold">L-T-P-C</th>
+              <th className="p-3 text-left font-semibold">Faculty</th>
+              <th className="p-3 text-left font-semibold">Rooms</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SUBJECTS.map((s) => {
+              const rooms = new Set<string>();
+              Object.values(TIMETABLE).forEach((day) =>
+                Object.values(day).forEach((e) => { if (e.code === s.code) rooms.add(e.room); })
+              );
+              return (
+                <tr key={s.code}>
+                  <td className="border-t p-3" style={{ borderColor: "var(--border-subtle)" }}>
+                    <span className="font-semibold" style={{ color: s.color }}>{s.code}</span>{" "}
+                    <span style={{ color: "var(--text-secondary)" }}>{s.name}</span>
+                  </td>
+                  <td className="border-t p-3" style={{ borderColor: "var(--border-subtle)" }}>{s.ltpc}</td>
+                  <td className="border-t p-3" style={{ borderColor: "var(--border-subtle)" }}>{s.faculty}</td>
+                  <td className="border-t p-3" style={{ borderColor: "var(--border-subtle)" }}>{[...rooms].join(", ")}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
