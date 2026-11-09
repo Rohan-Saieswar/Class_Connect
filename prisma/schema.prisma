@@ -251,6 +251,8 @@ model Announcement {
   isPinned     Boolean   @default(false)
   publishedAt  DateTime  @default(now())
   expiresAt    DateTime?
+  eventDate    DateTime?
+  editedAt     DateTime?
   attachments  String?   // JSON string of attachments
   authorId     String
   createdAt    DateTime  @default(now())

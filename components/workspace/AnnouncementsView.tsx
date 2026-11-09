@@ -1,249 +1,160 @@
 "use client";
-
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type { WorkspaceBranding } from "@/lib/branding";
 import Modal from "@/components/ui/Modal";
 import { useToast, ToastContainer } from "@/components/ui/Toast";
-import { Pin, Clock, Trash2, AlertCircle, RefreshCw } from "lucide-react";
+import { Pin, Clock, CalendarDays, Pencil, Trash2 } from "lucide-react";
 
-interface Props {
-  branding: WorkspaceBranding;
-}
+interface Props { branding: WorkspaceBranding; }
 
-interface AnnouncementItem {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-  priority: string;
-  isPinned: boolean;
-  publishedAt: string;
-  expiresAt: string | null;
-  authorId: string;
-  authorName: string;
-  authorRole: string;
-  subject: string;
-}
+type Announcement = {
+  id: string; title: string; content: string; category: string; priority: string;
+  isPinned: boolean; publishedAt: string; eventDate: string | null; editedAt: string | null;
+  authorId: string; authorName: string; authorRole: string; canEdit: boolean;
+};
 
-const CATEGORIES = [
-  "GENERAL",
-  "ACADEMIC",
-  "EXAMINATION",
-  "ASSIGNMENT",
-  "ATTENDANCE",
-  "EVENT",
-  "FACULTY",
-  "ADMINISTRATIVE",
-  "URGENT",
-];
+const CATEGORY_LABELS: Record<string, string> = {
+  GENERAL: "General", ACADEMIC: "Academic", EXAMINATION: "Exam", ASSIGNMENT: "Assignment",
+  ATTENDANCE: "Attendance", EVENT: "Event", FACULTY: "Faculty", ADMINISTRATIVE: "Administrative", URGENT: "Urgent",
+};
+const PRIORITY_LABELS: Record<string, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", URGENT: "Urgent" };
+const ROLE_LABELS: Record<string, string> = { CR: "CR", FACULTY: "Faculty", STUDENT: "Student" };
+const EMPTY_FORM = { title: "", content: "", category: "GENERAL", priority: "MEDIUM", isPinned: false, eventDate: "" };
 
-const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"];
+const fmtDay = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+const fmtEventDay = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
-function getRelativeTime(dateString: string) {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  if (diffMs < 0) return "Just now";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return "Just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
-  const years = Math.floor(months / 12);
-  return `${years} year${years === 1 ? "" : "s"} ago`;
+function timeAgo(iso: string) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "Just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d} day${d === 1 ? "" : "s"} ago`;
+  return new Date(iso).toLocaleDateString("en-IN");
 }
 
 export default function AnnouncementsView({ branding }: Props) {
-  const params = useParams();
-  const rawWorkspace = params?.workspace;
-  const workspace =
-    typeof rawWorkspace === "string"
-      ? rawWorkspace
-      : Array.isArray(rawWorkspace)
-        ? rawWorkspace[0]
-        : "";
+  const params = useParams<{ workspace: string }>();
+  const section = params?.workspace ?? "";
 
-  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [items, setItems] = useState<Announcement[]>([]);
   const [canPost, setCanPost] = useState(false);
-  const [canManage, setCanManage] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [filter, setFilter] = useState("All");
-  const [newModal, setNewModal] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const [form, setForm] = useState({
-    title: "",
-    content: "",
-    category: "GENERAL",
-    priority: "MEDIUM",
-    isPinned: false,
-  });
-
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
   const { toasts, toast, dismiss } = useToast();
 
-  const loadAnnouncements = useCallback(async () => {
-    if (!workspace) return;
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/${encodeURIComponent(workspace)}/announcements`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`/api/${section}/announcements`, { cache: "no-store" });
+      if (!res.ok) throw new Error("load failed");
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to load announcements.");
-      }
-      setAnnouncements(data.announcements || []);
+      setItems(data.announcements);
       setCanPost(Boolean(data.canPost));
-      setCanManage(Boolean(data.canManage));
-      setCurrentUserId(data.currentUserId || null);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load announcements.";
-      setError(msg);
+      setLoadError(false);
+    } catch {
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
-  }, [workspace]);
+  }, [section]);
 
-  useEffect(() => {
-    void loadAnnouncements();
-  }, [loadAnnouncements]);
+  useEffect(() => { load(); }, [load]);
 
-  const categories = useMemo(() => {
-    const activeCategories = Array.from(
-      new Set(announcements.map((a) => a.category).filter(Boolean)),
-    );
-    return ["All", ...activeCategories];
-  }, [announcements]);
+  const categories = ["All", ...Array.from(new Set(items.map((a) => a.category)))];
+  const filtered = filter === "All" ? items : items.filter((a) => a.category === filter);
+  const detail = items.find((a) => a.id === detailId) || null;
+  const label = (c: string) => (c === "All" ? "All" : CATEGORY_LABELS[c] ?? c);
 
-  const filtered = useMemo(() => {
-    if (filter === "All") return announcements;
-    return announcements.filter((a) => a.category === filter);
-  }, [announcements, filter]);
+  const openNew = () => { setEditingId(null); setForm(EMPTY_FORM); setFormOpen(true); };
+  const openEdit = (a: Announcement) => {
+    setEditingId(a.id);
+    setForm({
+      title: a.title, content: a.content, category: a.category, priority: a.priority,
+      isPinned: a.isPinned, eventDate: a.eventDate ? a.eventDate.slice(0, 10) : "",
+    });
+    setDetailId(null);
+    setFormOpen(true);
+  };
 
-  const detail = useMemo(
-    () => announcements.find((a) => a.id === detailId) || null,
-    [announcements, detailId],
-  );
-
-  const handlePost = async () => {
+  const handleSave = async () => {
     if (!form.title.trim() || !form.content.trim()) {
-      toast("Title and content are required.", "error");
+      toast("Title and message are required.", "error");
       return;
     }
-    setSubmitting(true);
+    setSaving(true);
     try {
-      const res = await fetch(`/api/${encodeURIComponent(workspace)}/announcements`, {
-        method: "POST",
+      const payload = { ...form, eventDate: form.eventDate || null };
+      const res = await fetch(`/api/${section}/announcements`, {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: form.title.trim(),
-          content: form.content.trim(),
-          category: form.category,
-          priority: form.priority,
-          isPinned: form.isPinned,
-        }),
+        body: JSON.stringify(editingId ? { id: editingId, ...payload } : payload),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to post announcement.");
-      }
-      setForm({
-        title: "",
-        content: "",
-        category: "GENERAL",
-        priority: "MEDIUM",
-        isPinned: false,
-      });
-      setNewModal(false);
-      toast("Announcement posted!", "success");
-      await loadAnnouncements();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to post announcement.";
-      toast(msg, "error");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not save.");
+      setFormOpen(false);
+      setEditingId(null);
+      setForm(EMPTY_FORM);
+      toast(editingId ? (data.edited ? "Announcement updated." : "No changes to save.") : "Announcement posted!", "success");
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not save.", "error");
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
-  const handleTogglePin = async (
-    e: React.MouseEvent,
-    id: string,
-    currentPinned: boolean,
-  ) => {
-    e.stopPropagation();
-    try {
-      const res = await fetch(`/api/${encodeURIComponent(workspace)}/announcements`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, isPinned: !currentPinned }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to update pin state.");
-      }
-      setAnnouncements((prev) =>
-        prev
-          .map((a) => (a.id === id ? { ...a, isPinned: !currentPinned } : a))
-          .sort((a, b) => {
-            if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-            return (
-              new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-            );
-          }),
-      );
-      toast(
-        !currentPinned ? "Announcement pinned!" : "Announcement unpinned!",
-        "success",
-      );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update pin.";
-      toast(msg, "error");
-    }
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Delete this announcement?")) return;
+    const res = await fetch(`/api/${section}/announcements?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || "Could not delete.", "error"); return; }
+    setItems((prev) => prev.filter((a) => a.id !== id));
+    setDetailId(null);
+    toast("Announcement deleted.", "success");
   };
 
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this announcement?")) return;
-    try {
-      const res = await fetch(
-        `/api/${encodeURIComponent(workspace)}/announcements?id=${encodeURIComponent(id)}`,
-        { method: "DELETE" },
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to delete announcement.");
-      }
-      setAnnouncements((prev) => prev.filter((a) => a.id !== id));
-      if (detailId === id) setDetailId(null);
-      toast("Announcement deleted.", "success");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete announcement.";
-      toast(msg, "error");
-    }
+  const handlePin = async (a: Announcement) => {
+    const res = await fetch(`/api/${section}/announcements`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: a.id, isPinned: !a.isPinned }),
+    });
+    if (!res.ok) { toast("Could not update.", "error"); return; }
+    await load();
   };
+
+  const inputStyle = { background: "var(--bg-primary)", border: "1px solid var(--border-medium)", color: "var(--text-primary)" };
+  const labelStyle = { color: "var(--text-muted)" };
+  const editedBadge = (a: Announcement) =>
+    a.editedAt ? (
+      <span className="inline-flex items-center gap-1 text-xs italic" style={{ color: "var(--text-muted)" }} title={`Edited ${fmtDay(a.editedAt)}, ${fmtTime(a.editedAt)}`}>
+        <Pencil size={10} /> Edited
+      </span>
+    ) : null;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <ToastContainer toasts={toasts} dismiss={dismiss} />
 
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>
-          📢 Announcements
-        </h2>
+        <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>📢 Announcements</h2>
         {canPost && (
           <button
-            onClick={() => setNewModal(true)}
+            onClick={openNew}
             className="px-4 py-2 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-95"
             style={{ background: branding.accentColor }}
           >
@@ -252,445 +163,171 @@ export default function AnnouncementsView({ branding }: Props) {
         )}
       </div>
 
-      {/* Filters */}
-      {!loading && !error && announcements.length > 0 && (
+      {categories.length > 1 && (
         <div className="flex gap-2 flex-wrap">
-          {categories.map((t) => (
-            <button
-              key={t}
-              onClick={() => setFilter(t)}
+          {categories.map((c) => (
+            <button key={c} onClick={() => setFilter(c)}
               className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all active:scale-95"
-              style={{
-                background: filter === t ? branding.accentColor : "var(--bg-card)",
-                color: filter === t ? "#fff" : "var(--text-secondary)",
-                border: "1px solid var(--border-subtle)",
-              }}
-            >
-              {t}
-            </button>
+              style={{ background: filter === c ? branding.accentColor : "var(--bg-card)", color: filter === c ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}
+            >{label(c)}</button>
           ))}
         </div>
       )}
 
-      {/* Loading state */}
-      {loading && (
-        <div className="space-y-4" aria-label="Loading announcements">
-          {[1, 2, 3].map((key) => (
-            <div
-              key={key}
-              className="rounded-2xl p-6 border animate-pulse"
-              style={{
-                background: "var(--bg-card)",
-                borderColor: "var(--border-subtle)",
-              }}
-            >
-              <div className="h-4 bg-gray-200 dark:bg-zinc-800 rounded w-1/4 mb-3" />
-              <div className="h-6 bg-gray-200 dark:bg-zinc-800 rounded w-3/4 mb-4" />
-              <div className="h-4 bg-gray-200 dark:bg-zinc-800 rounded w-full mb-2" />
-              <div className="h-4 bg-gray-200 dark:bg-zinc-800 rounded w-2/3" />
-            </div>
-          ))}
+      {loading && <p className="text-sm" style={{ color: "var(--text-muted)" }}>Loading announcements…</p>}
+
+      {!loading && loadError && (
+        <div className="rounded-2xl p-6 text-sm" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+          Couldn’t load announcements.{" "}
+          <button onClick={() => { setLoading(true); load(); }} className="font-semibold underline">Try again</button>
         </div>
       )}
 
-      {/* Error state */}
-      {!loading && error && (
+      {!loading && !loadError && filtered.length === 0 && (
+        <div className="rounded-2xl p-10 text-center text-sm" style={{ background: "var(--bg-card)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+          {items.length === 0
+            ? canPost ? "No announcements yet. Post the first one with “+ New”." : "No announcements yet."
+            : "No announcements match this filter."}
+        </div>
+      )}
+
+      {filtered.map((a) => (
         <div
-          className="rounded-2xl p-8 border text-center space-y-4"
-          style={{
-            background: "var(--bg-card)",
-            borderColor: "var(--border-subtle)",
-          }}
+          key={a.id}
+          className="interactive-card rounded-2xl p-6 cursor-pointer"
+          style={{ background: "var(--bg-card)", border: a.isPinned ? `1px solid ${branding.accentColor}50` : "1px solid var(--border-subtle)" }}
+          onClick={() => setDetailId(a.id)}
         >
-          <div className="flex justify-center text-red-500">
-            <AlertCircle size={32} />
-          </div>
-          <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-            {error}
-          </p>
-          <button
-            onClick={() => void loadAnnouncements()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-95"
-            style={{ background: branding.accentColor }}
-          >
-            <RefreshCw size={14} /> Try again
-          </button>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {!loading && !error && filtered.length === 0 && (
-        <div
-          className="rounded-2xl p-12 border text-center"
-          style={{
-            background: "var(--bg-card)",
-            borderColor: "var(--border-subtle)",
-          }}
-        >
-          <p className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
-            No announcements yet
-          </p>
-          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-            {filter !== "All"
-              ? `No announcements under category "${filter}".`
-              : "Check back later for updates from your CRs and faculty."}
-          </p>
-        </div>
-      )}
-
-      {/* Cards list */}
-      {!loading &&
-        !error &&
-        filtered.map((a) => {
-          const canDeleteThis = canPost && (canManage || a.authorId === currentUserId);
-          return (
-            <div
-              key={a.id}
-              className="interactive-card rounded-2xl p-6 cursor-pointer"
-              style={{
-                background: "var(--bg-card)",
-                border: a.isPinned
-                  ? `1px solid ${branding.accentColor}50`
-                  : "1px solid var(--border-subtle)",
-              }}
-              onClick={() => setDetailId(a.id)}
-            >
-              <div className="flex items-start justify-between gap-4 mb-2">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                    {a.isPinned && (
-                      <span
-                        className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md"
-                        style={{
-                          background: branding.accentColor + "20",
-                          color: branding.accentColor,
-                        }}
-                      >
-                        <Pin size={10} /> Pinned
-                      </span>
-                    )}
-                    <span
-                      className="text-xs px-2 py-0.5 rounded-md uppercase font-medium"
-                      style={{
-                        background: "var(--bg-primary)",
-                        color: "var(--text-muted)",
-                      }}
-                    >
-                      {a.category}
-                    </span>
-                    {a.priority !== "MEDIUM" && (
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-md font-medium ${
-                          a.priority === "URGENT" || a.priority === "HIGH"
-                            ? "bg-red-500/10 text-red-600 dark:text-red-400"
-                            : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                        }`}
-                      >
-                        {a.priority}
-                      </span>
-                    )}
-                  </div>
-                  <h3
-                    className="text-base font-semibold"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {a.title}
-                  </h3>
-                </div>
-
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span
-                    className="text-xs flex items-center gap-1"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    <Clock size={11} />
-                    {getRelativeTime(a.publishedAt)}
-                  </span>
-                  {canPost && (
-                    <button
-                      onClick={(e) => handleTogglePin(e, a.id, a.isPinned)}
-                      title={a.isPinned ? "Unpin announcement" : "Pin announcement"}
-                      className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-all text-xs"
-                      style={{
-                        color: a.isPinned
-                          ? branding.accentColor
-                          : "var(--text-secondary)",
-                      }}
-                    >
-                      <Pin size={14} className={a.isPinned ? "fill-current" : ""} />
-                    </button>
-                  )}
-                  {canDeleteThis && (
-                    <button
-                      onClick={(e) => handleDelete(e, a.id)}
-                      title="Delete announcement"
-                      className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 transition-all text-xs"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
+          <div className="flex items-start justify-between gap-4 mb-2">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                {a.isPinned && <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: branding.accentColor + "20", color: branding.accentColor }}><Pin size={10} /> Pinned</span>}
+                <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: "var(--bg-primary)", color: "var(--text-muted)" }}>{CATEGORY_LABELS[a.category] ?? a.category}</span>
+                {(a.priority === "HIGH" || a.priority === "URGENT") && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: "#b91c1c20", color: "#b91c1c" }}>{PRIORITY_LABELS[a.priority]}</span>
+                )}
+                {editedBadge(a)}
               </div>
-
-              <p
-                className="text-sm leading-relaxed mb-4 line-clamp-2"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {a.content}
-              </p>
-
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-                  style={{ background: branding.accentColor }}
+              <h3 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>{a.title}</h3>
+            </div>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <span className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+                <Clock size={11} />{timeAgo(a.publishedAt)}
+              </span>
+              {a.canEdit && (
+                <button
+                  type="button"
+                  title="Delete announcement"
+                  aria-label="Delete announcement"
+                  onClick={(e) => { e.stopPropagation(); handleDelete(a.id); }}
+                  className="rounded-lg p-1.5 transition-colors hover:bg-red-50"
+                  style={{ color: "#b91c1c" }}
                 >
-                  {a.authorName ? a.authorName[0]?.toUpperCase() : "U"}
-                </div>
-                <div>
-                  <p
-                    className="text-xs font-medium"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {a.authorName}
-                  </p>
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    {a.authorRole} · {a.subject}
-                  </p>
-                </div>
-              </div>
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
-          );
-        })}
+          </div>
+          <p className="text-sm leading-relaxed mb-3 line-clamp-2" style={{ color: "var(--text-secondary)" }}>{a.content}</p>
+          {a.eventDate && (
+            <p className="text-xs font-medium mb-3 flex items-center gap-1.5" style={{ color: branding.accentColor }}>
+              <CalendarDays size={12} /> {fmtEventDay(a.eventDate)}
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white" style={{ background: branding.accentColor }}>{a.authorName[0]}</div>
+            <div>
+              <p className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{a.authorName}</p>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                {ROLE_LABELS[a.authorRole] ?? a.authorRole} · {fmtDay(a.publishedAt)}, {fmtTime(a.publishedAt)}
+              </p>
+            </div>
+          </div>
+        </div>
+      ))}
 
-      {/* New Announcement Modal */}
-      <Modal
-        open={newModal}
-        onClose={() => setNewModal(false)}
-        title="New Announcement"
-        accent={branding.accentColor}
-      >
+      <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editingId ? "Edit Announcement" : "New Announcement"} accent={branding.accentColor}>
         <div className="space-y-4">
           <div>
-            <label
-              className="block text-xs font-medium mb-1.5"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Title *
-            </label>
-            <input
-              value={form.title}
-              maxLength={150}
-              onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
-              placeholder="e.g. Assignment deadline extended"
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={{
-                background: "var(--bg-primary)",
-                border: "1px solid var(--border-medium)",
-                color: "var(--text-primary)",
-              }}
-            />
+            <label className="block text-xs font-medium mb-1.5" style={labelStyle}>Title *</label>
+            <input value={form.title} maxLength={150} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
+              placeholder="e.g. FIC 102 mid exam on Monday"
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} />
           </div>
-
           <div>
-            <label
-              className="block text-xs font-medium mb-1.5"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Content *
-            </label>
-            <textarea
-              rows={4}
-              maxLength={5000}
-              value={form.content}
-              onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))}
+            <label className="block text-xs font-medium mb-1.5" style={labelStyle}>Message *</label>
+            <textarea rows={4} value={form.content} maxLength={5000} onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))}
               placeholder="Write your announcement..."
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none"
-              style={{
-                background: "var(--bg-primary)",
-                border: "1px solid var(--border-medium)",
-                color: "var(--text-primary)",
-              }}
-            />
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none" style={inputStyle} />
           </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label
-                className="block text-xs font-medium mb-1.5"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Category
-              </label>
-              <select
-                value={form.category}
-                onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))}
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                style={{
-                  background: "var(--bg-primary)",
-                  border: "1px solid var(--border-medium)",
-                  color: "var(--text-primary)",
-                }}
-              >
-                {CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
+              <label className="block text-xs font-medium mb-1.5" style={labelStyle}>Category</label>
+              <select value={form.category} onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle}>
+                {Object.entries(CATEGORY_LABELS).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
               </select>
             </div>
-
             <div>
-              <label
-                className="block text-xs font-medium mb-1.5"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Priority
-              </label>
-              <select
-                value={form.priority}
-                onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))}
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-                style={{
-                  background: "var(--bg-primary)",
-                  border: "1px solid var(--border-medium)",
-                  color: "var(--text-primary)",
-                }}
-              >
-                {PRIORITIES.map((pri) => (
-                  <option key={pri} value={pri}>
-                    {pri}
-                  </option>
-                ))}
+              <label className="block text-xs font-medium mb-1.5" style={labelStyle}>Priority</label>
+              <select value={form.priority} onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle}>
+                {Object.entries(PRIORITY_LABELS).map(([value, text]) => <option key={value} value={value}>{text}</option>)}
               </select>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 pt-1">
-            <input
-              type="checkbox"
-              id="pin-to-top"
-              checked={form.isPinned}
-              onChange={(e) => setForm((p) => ({ ...p, isPinned: e.target.checked }))}
-              className="rounded"
-            />
-            <label
-              htmlFor="pin-to-top"
-              className="text-xs font-medium cursor-pointer"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Pin to top
-            </label>
+          <div>
+            <label className="block text-xs font-medium mb-1.5" style={labelStyle}>Date it applies to (optional: exam, deadline, event)</label>
+            <input type="date" value={form.eventDate} onChange={(e) => setForm((p) => ({ ...p, eventDate: e.target.value }))}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} />
           </div>
-
+          <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
+            <input type="checkbox" checked={form.isPinned} onChange={(e) => setForm((p) => ({ ...p, isPinned: e.target.checked }))} />
+            Pin this announcement to the top
+          </label>
           <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => setNewModal(false)}
-              disabled={submitting}
-              className="flex-1 py-2.5 rounded-xl text-sm font-medium transition-all"
-              style={{
-                background: "var(--bg-primary)",
-                color: "var(--text-secondary)",
-                border: "1px solid var(--border-subtle)",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => void handlePost()}
-              disabled={submitting}
-              className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-50"
-              style={{ background: branding.accentColor }}
-            >
-              {submitting ? "Posting..." : "Post Announcement"}
+            <button onClick={() => setFormOpen(false)} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: "var(--bg-primary)", color: "var(--text-secondary)", border: "1px solid var(--border-subtle)" }}>Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white disabled:opacity-60" style={{ background: branding.accentColor }}>
+              {saving ? "Saving…" : editingId ? "Save Changes" : "Post Announcement"}
             </button>
           </div>
         </div>
       </Modal>
 
-      {/* Detail Modal */}
-      <Modal
-        open={!!detail}
-        onClose={() => setDetailId(null)}
-        title={detail?.title || ""}
-        accent={branding.accentColor}
-      >
+      <Modal open={!!detail} onClose={() => setDetailId(null)} title={detail?.title || ""} accent={branding.accentColor}>
         {detail && (
           <div>
             <div className="flex items-center gap-2 mb-4 flex-wrap">
-              <span
-                className="text-xs px-2 py-0.5 rounded-md uppercase font-semibold"
-                style={{
-                  background: branding.accentColor + "20",
-                  color: branding.accentColor,
-                }}
-              >
-                {detail.category}
-              </span>
-              <span
-                className={`text-xs px-2 py-0.5 rounded-md font-medium ${
-                  detail.priority === "URGENT" || detail.priority === "HIGH"
-                    ? "bg-red-500/10 text-red-600 dark:text-red-400"
-                    : "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                }`}
-              >
-                {detail.priority}
-              </span>
-              {detail.isPinned && (
-                <span
-                  className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md"
-                  style={{
-                    background: branding.accentColor + "20",
-                    color: branding.accentColor,
-                  }}
-                >
-                  <Pin size={10} /> Pinned
-                </span>
+              <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: branding.accentColor + "20", color: branding.accentColor }}>{CATEGORY_LABELS[detail.category] ?? detail.category}</span>
+              {(detail.priority === "HIGH" || detail.priority === "URGENT") && (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-md" style={{ background: "#b91c1c20", color: "#b91c1c" }}>{PRIORITY_LABELS[detail.priority]}</span>
               )}
-              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {getRelativeTime(detail.publishedAt)}
-              </span>
             </div>
-
-            <p
-              className="text-sm leading-relaxed mb-5 whitespace-pre-wrap"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              {detail.content}
-            </p>
-
-            <div
-              className="flex items-center justify-between pt-4 border-t"
-              style={{ borderColor: "var(--border-subtle)" }}
-            >
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white"
-                  style={{ background: branding.accentColor }}
-                >
-                  {detail.authorName ? detail.authorName[0]?.toUpperCase() : "U"}
-                </div>
-                <div>
-                  <p
-                    className="text-sm font-medium"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {detail.authorName}
-                  </p>
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    {detail.authorRole} · {detail.subject}
-                  </p>
-                </div>
+            <div className="mb-4 rounded-xl p-3 text-xs space-y-1" style={{ background: "var(--bg-primary)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+              <p><span style={labelStyle}>Posted:</span> {fmtDay(detail.publishedAt)}, {fmtTime(detail.publishedAt)}</p>
+              {detail.eventDate && <p><span style={labelStyle}>Applies to:</span> {fmtEventDay(detail.eventDate)}</p>}
+              {detail.editedAt && <p><span style={labelStyle}>Edited:</span> {fmtDay(detail.editedAt)}, {fmtTime(detail.editedAt)}</p>}
+            </div>
+            <p className="text-sm leading-relaxed mb-5 whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{detail.content}</p>
+            <div className="flex items-center gap-2 pt-4 border-t" style={{ borderColor: "var(--border-subtle)" }}>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white" style={{ background: branding.accentColor }}>{detail.authorName[0]}</div>
+              <div className="flex-1">
+                <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>{detail.authorName}</p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>{ROLE_LABELS[detail.authorRole] ?? detail.authorRole}</p>
               </div>
-
-              {canPost &&
-                (canManage || detail.authorId === currentUserId) && (
-                  <button
-                    onClick={(e) => handleDelete(e, detail.id)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-500 hover:bg-red-500/10 transition-all"
-                  >
-                    <Trash2 size={13} /> Delete
+              {detail.canEdit && (
+                <div className="flex gap-2">
+                  <button onClick={() => handlePin(detail)} className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: "var(--bg-primary)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+                    {detail.isPinned ? "Unpin" : "Pin"}
                   </button>
-                )}
+                  <button onClick={() => openEdit(detail)} className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: "var(--bg-primary)", border: "1px solid var(--border-subtle)", color: "var(--text-secondary)" }}>
+                    Edit
+                  </button>
+                  <button onClick={() => handleDelete(detail.id)} className="px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ background: "#b91c1c" }}>
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
